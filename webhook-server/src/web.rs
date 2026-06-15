@@ -4,6 +4,8 @@ use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
 use axum::extract::WebSocketUpgrade;
 use axum::extract::{FromRef, Request, State};
+use axum::http::HeaderName;
+use axum::http::HeaderValue;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -14,6 +16,7 @@ use futures::stream::SplitSink;
 use futures::stream::SplitStream;
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -184,6 +187,23 @@ async fn fallback_handler() -> Response<Body> {
         .unwrap()
 }
 
+const HOP_BY_HOP_HEADERS: [&str; 9] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+fn should_skip_header(name: &str) -> bool {
+    let lower_name = name.to_ascii_lowercase();
+    HOP_BY_HOP_HEADERS.contains(&lower_name.as_str())
+}
+
 async fn webhook_handler(state: State<AppState>, request: Request) -> Response<Body> {
     let ctx = state.ctx.clone();
     let id = Uuid::now_v7();
@@ -201,12 +221,22 @@ async fn webhook_handler(state: State<AppState>, request: Request) -> Response<B
     let mut http_req = TunnelMessage::new(wh_header, http_st);
 
     // Add original headers
-    http_req.http_headers.extend(
-        request
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap().to_string())),
-    );
+    let mut orig_headers: Vec<(String, String)> = Vec::new();
+    for (name, value) in request.headers() {
+        if !should_skip_header(name.as_str()) {
+            let header_name = HeaderName::from_str(name.as_str()).unwrap();
+            let header_value = HeaderValue::from_bytes(value.as_bytes()).unwrap();
+
+            orig_headers.push((
+                header_name.to_string(),
+                header_value.to_str().unwrap().to_string(),
+            ));
+        }
+    }
+
+    if orig_headers.len() > 0 {
+        http_req.http_headers.extend(orig_headers);
+    }
 
     // Add original body if present
     let with_body = ["POST", "PUT", "PATCH"];
@@ -236,8 +266,11 @@ fn handle_forward_success(fw_res: TunnelMessage) -> Response<Body> {
     let st = st_opt.unwrap();
 
     let mut r = Response::builder().status(st.status_code);
+
     for (k, v) in fw_res.http_headers.iter() {
-        r = r.header(k, v);
+        if !should_skip_header(k.as_str()) {
+            r = r.header(k, v);
+        }
     }
 
     r.body(Body::from(fw_res.http_body)).unwrap()
