@@ -88,8 +88,8 @@ impl MessageMap {
     }
 
     pub async fn get(&self, id: &u128) -> Result<TunnelMessage> {
-        // Try to get the message within 10 seconds and give up after that
-        match timeout(Duration::from_secs(10), self.get_inner(id)).await {
+        // Try to get the message within 20 seconds and give up after that
+        match timeout(Duration::from_secs(20), self.get_inner(id)).await {
             Ok(res) => Ok(res.expect("Message must be present in the map.")),
             Err(_) => {
                 let msg = "Message map getter timeout.";

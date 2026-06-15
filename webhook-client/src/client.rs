@@ -109,6 +109,7 @@ async fn ws_main(ctx: Arc<Context>) -> Result<()> {
 
     let Ok(crawler) = ClientBuilder::new()
         .redirect(redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
         .build()
     else {
         let msg = "Failed to create crawler client.";
